@@ -1,65 +1,55 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
-#include <stdbool.h>
+#include <sys/wait.h>
+#include <string.h>
 
-// Function to check if a command exists on the system
-bool command_exists(const char *cmd) {
-    return system(cmd) == 0;
-}
+char* output_file = "output.mp4";
+char* save_path = "./";
+pid_t recording_pid = 0;
 
-int main(int argc, char* argv[]) {
-    char* output_file = "output.mp4"; // Default output file name
-    char* save_path = "./";          // Default save path
-
-    // Check if 'script' and 'ttyrec' commands exist
-    if (!command_exists("script") || !command_exists("ttyrec")) {
-        fprintf(stderr, "Error: 'script' and 'ttyrec' commands are required but not found.\n");
-        return 1;
-    }
-
-    // Parse command-line options
-    int opt;
-    while ((opt = getopt(argc, argv, "o:p:")) != -1) {
-        switch (opt) {
-            case 'o':
-                output_file = optarg;
-                break;
-            case 'p':
-                save_path = optarg;
-                break;
-            default:
-                fprintf(stderr, "Usage: %s [-o output_file] [-p save_path]\n", argv[0]);
-                return 1;
-        }
-    }
-
-    // Create the full output file path
+// Function to start the terminal recording in the background
+void start_recording() {
     char full_output_path[1024];
     snprintf(full_output_path, sizeof(full_output_path), "%s%s", save_path, output_file);
 
-    // Create a command to capture terminal activities using the 'script' command
-    char script_command[1024];
-    snprintf(script_command, sizeof(script_command), "script -c \"ttyrec -e cat\" %s", full_output_path);
-
-    // Start capturing terminal activities
-    if (system(script_command) != 0) {
-        fprintf(stderr, "Error: Failed to start terminal recording.\n");
-        return 1;
+    recording_pid = fork();
+    if (recording_pid == 0) {
+        execlp("script", "script", "-c", "ttyrec -e cat", full_output_path, NULL);
+        perror("Error");
+        exit(1);
     }
 
-    // Provide a message and wait for user input to stop recording
+    printf("Terminal activity recording started with PID: %d\n", recording_pid);
+}
+
+// Function to stop the terminal recording gracefully
+void stop_recording() {
+    if (recording_pid > 0) {
+        printf("Stopping recording...\n");
+        kill(recording_pid, SIGINT);
+        waitpid(recording_pid, NULL, 0);
+        printf("Recording stopped. Video saved as %s%s\n", save_path, output_file);
+        recording_pid = 0;
+    } else {
+        printf("No recording session is currently active.\n");
+    }
+}
+
+int main(int argc, char* argv[]) {
+    for (int i = 1; i < argc; i += 2) {
+        if (i + 1 < argc) {
+            (strcmp(argv[i], "-o") == 0) ? (output_file = argv[i + 1]) : (strcmp(argv[i], "-p") == 0) ? (save_path = argv[i + 1]) : (void)0;
+        }
+    }
+
+    start_recording();
+
+    // Set a signal handler to stop recording on exit
+    atexit(stop_recording);
+
     printf("Terminal activity recording started. Press Enter to stop...\n");
     getchar();
-
-    // Stop the 'script' command when the user presses Enter
-    if (system("pkill -INT -f 'script -c ttyrec -e cat'") != 0) {
-        fprintf(stderr, "Error: Failed to stop terminal recording.\n");
-        return 1;
-    }
-
-    printf("Recording stopped. Video saved as %s\n", full_output_path);
 
     return 0;
 }
